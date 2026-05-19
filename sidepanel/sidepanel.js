@@ -13595,9 +13595,16 @@ const accountContributionManager = window.SidepanelContributionMode?.createContr
       nickname: String(inputContributionNickname?.value || '').trim(),
       qq: String(inputContributionQq?.value || '').trim(),
     }),
+    getSelectedFlowId: () => (typeof getSelectedFlowId === 'function'
+      ? getSelectedFlowId(latestState)
+      : String(latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID),
+    getSelectedTargetId: (flowId, state = latestState) => (typeof getSelectedTargetIdForState === 'function'
+      ? getSelectedTargetIdForState(state, flowId)
+      : (String(state?.panelMode || state?.kiroTargetId || 'cpa').trim().toLowerCase() || 'cpa')),
     isModeSwitchBlocked: isContributionModeSwitchBlocked,
     openConfirmModal,
     openExternalUrl,
+    persistCurrentSettingsForAction,
     showToast,
     startContributionAutoRun: () => startAutoRunFromCurrentSettings(),
     updateAccountRunHistorySettingsUI,

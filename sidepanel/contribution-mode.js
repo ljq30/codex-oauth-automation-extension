@@ -93,15 +93,44 @@
     }
 
     function getActiveFlowId(currentState = getLatestState()) {
-      return normalizeString(currentState.activeFlowId || currentState.flowId).toLowerCase() || 'openai';
+      const selectedFlowId = typeof helpers.getSelectedFlowId === 'function'
+        ? normalizeString(helpers.getSelectedFlowId(currentState)).toLowerCase()
+        : '';
+      return selectedFlowId || normalizeString(currentState.activeFlowId || currentState.flowId).toLowerCase() || 'openai';
     }
 
     function getActiveTargetId(currentState = getLatestState()) {
       const activeFlowId = getActiveFlowId(currentState);
+      const selectedTargetId = typeof helpers.getSelectedTargetId === 'function'
+        ? normalizeString(helpers.getSelectedTargetId(activeFlowId, currentState)).toLowerCase()
+        : '';
+      if (selectedTargetId) {
+        return selectedTargetId;
+      }
       if (activeFlowId === 'kiro') {
         return normalizeString(currentState.kiroTargetId || currentState.targetId || 'kiro-rs').toLowerCase() || 'kiro-rs';
       }
       return normalizeString(currentState.openaiIntegrationTargetId || currentState.panelMode || currentState.targetId || 'cpa').toLowerCase() || 'cpa';
+    }
+
+    function applySelectedFlowToState(nextState = {}, flowId = 'openai', targetId = '') {
+      const selectedFlowId = normalizeString(flowId).toLowerCase() || 'openai';
+      const selectedTargetId = normalizeString(targetId).toLowerCase();
+      const baseState = nextState && typeof nextState === 'object' ? nextState : {};
+      if (selectedFlowId === 'openai') {
+        return {
+          ...baseState,
+          activeFlowId: selectedFlowId,
+          flowId: selectedFlowId,
+          panelMode: selectedTargetId || normalizeString(baseState.panelMode).toLowerCase() || 'cpa',
+        };
+      }
+      return {
+        ...baseState,
+        activeFlowId: selectedFlowId,
+        flowId: selectedFlowId,
+        kiroTargetId: selectedTargetId || normalizeString(baseState.kiroTargetId || baseState.targetId).toLowerCase() || 'kiro-rs',
+      };
     }
 
     function getContributionTutorialEntry(currentState = getLatestState()) {
@@ -303,11 +332,7 @@
     }
 
     function getContributionUploadPageUrl() {
-      const currentState = getLatestState();
-      if (getActiveFlowId(currentState) !== 'openai') {
-        return normalizeString(getContributionTutorialEntry(currentState)?.portalUrl || contributionPortalUrl);
-      }
-      return normalizeString(contributionUploadUrl);
+      return normalizeString(contributionUploadUrl || contributionPortalUrl);
     }
 
     function openContributionPortalPage() {
@@ -340,12 +365,17 @@
     }
 
     async function requestContributionMode(enabled) {
+      const selectedFlowId = getActiveFlowId();
+      const selectedTargetId = getActiveTargetId();
+      if (typeof helpers.persistCurrentSettingsForAction === 'function') {
+        await helpers.persistCurrentSettingsForAction();
+      }
       const response = await runtime.sendMessage({
         type: 'SET_ACCOUNT_CONTRIBUTION_MODE',
         source: 'sidepanel',
         payload: {
           enabled: Boolean(enabled),
-          flowId: getActiveFlowId(),
+          flowId: selectedFlowId,
           adapterId: getContributionEntryAdapterId(),
         },
       });
@@ -357,8 +387,9 @@
         throw new Error('贡献模式切换后未返回最新状态。');
       }
 
-      helpers.applySettingsState?.(response.state);
-      helpers.updateStatusDisplay?.(response.state);
+      const nextState = applySelectedFlowToState(response.state, selectedFlowId, selectedTargetId);
+      helpers.applySettingsState?.(nextState);
+      helpers.updateStatusDisplay?.(nextState);
       render();
     }
 
@@ -494,8 +525,9 @@
       }
 
       if (dom.btnOpenContributionUpload) {
+        dom.btnOpenContributionUpload.hidden = !available;
         dom.btnOpenContributionUpload.disabled = !available;
-        dom.btnOpenContributionUpload.textContent = activeFlowId === 'openai' ? '已有认证文件？前往上传' : '查看当前 flow 贡献说明';
+        dom.btnOpenContributionUpload.textContent = '已有认证文件？前往上传';
       }
 
       if (dom.btnExitContributionMode) {

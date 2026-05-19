@@ -77,6 +77,12 @@ test('contribution mode manager does not project openai-only ui state into kiro 
       updateConfigMenuControls() {},
       closeConfigMenu() {},
       closeAccountRecordsPanel() {},
+      getSelectedFlowId() {
+        return 'kiro';
+      },
+      getSelectedTargetId() {
+        return 'kiro-rs';
+      },
       isModeSwitchBlocked() {
         return false;
       },
@@ -98,8 +104,9 @@ test('contribution mode manager does not project openai-only ui state into kiro 
   assert.equal(dom.btnContributionMode.disabled, false);
   assert.equal(dom.btnContributionMode.title, '打开当前 flow 教程；当前已在贡献模式');
   assert.equal(dom.btnStartContribution.disabled, false);
+  assert.equal(dom.btnOpenContributionUpload.hidden, false);
   assert.equal(dom.btnOpenContributionUpload.disabled, false);
-  assert.equal(dom.btnOpenContributionUpload.textContent, '查看当前 flow 贡献说明');
+  assert.equal(dom.btnOpenContributionUpload.textContent, '已有认证文件？前往上传');
   assert.equal(rowVpsUrl.classList.hiddenState, false);
 });
 
@@ -114,15 +121,16 @@ test('combined contribution tutorial button opens current flow page and enables 
   )(windowObject, windowObject, setTimeout, clearTimeout);
 
   let latestState = {
-    activeFlowId: 'kiro',
-    flowId: 'kiro',
+    activeFlowId: 'openai',
+    flowId: 'openai',
     accountContributionEnabled: false,
     supportsAccountContribution: true,
     contributionAdapterId: '',
-    kiroTargetId: 'kiro-rs',
+    panelMode: 'sub2api',
   };
   const openedUrls = [];
   const sentMessages = [];
+  let persistCount = 0;
   const dom = {
     btnContributionMode: createElement(),
     accountContributionPanel: createElement(),
@@ -155,11 +163,26 @@ test('combined contribution tutorial button opens current flow page and enables 
       updateConfigMenuControls() {},
       closeConfigMenu() {},
       closeAccountRecordsPanel() {},
+      getSelectedFlowId() {
+        return 'kiro';
+      },
+      getSelectedTargetId() {
+        return 'kiro-rs';
+      },
       isModeSwitchBlocked() {
         return false;
       },
       openExternalUrl(url) {
         openedUrls.push(url);
+      },
+      async persistCurrentSettingsForAction() {
+        persistCount += 1;
+        latestState = {
+          ...latestState,
+          activeFlowId: 'kiro',
+          flowId: 'kiro',
+          kiroTargetId: 'kiro-rs',
+        };
       },
       showToast() {},
     },
@@ -169,6 +192,8 @@ test('combined contribution tutorial button opens current flow page and enables 
         return {
           state: {
             ...latestState,
+            activeFlowId: 'openai',
+            flowId: 'openai',
             accountContributionEnabled: true,
             contributionAdapterId: message.payload.adapterId,
           },
@@ -190,6 +215,10 @@ test('combined contribution tutorial button opens current flow page and enables 
     flowId: 'kiro',
     adapterId: 'kiro-builder-id',
   });
+  assert.equal(persistCount, 1);
   assert.equal(latestState.accountContributionEnabled, true);
   assert.equal(latestState.contributionAdapterId, 'kiro-builder-id');
+  assert.equal(latestState.activeFlowId, 'kiro');
+  assert.equal(latestState.flowId, 'kiro');
+  assert.equal(latestState.kiroTargetId, 'kiro-rs');
 });
