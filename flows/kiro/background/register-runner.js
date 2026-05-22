@@ -444,6 +444,52 @@
       return Boolean(await chrome.tabs.get(tabId).catch(() => null));
     }
 
+    function isKiroRegisterCandidateUrl(rawUrl = '') {
+      let parsed = null;
+      try {
+        parsed = new URL(String(rawUrl || '').trim());
+      } catch (_error) {
+        return false;
+      }
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        return false;
+      }
+      const hostname = parsed.hostname.toLowerCase();
+      return hostname === 'app.kiro.dev'
+        || hostname === 'kiro.dev'
+        || hostname === 'view.awsapps.com'
+        || hostname === 'login.awsapps.com'
+        || hostname === 'profile.aws.amazon.com'
+        || hostname === 'profile.aws'
+        || hostname.endsWith('.profile.aws.amazon.com')
+        || hostname.endsWith('.profile.aws')
+        || hostname === 'signin.aws.amazon.com'
+        || hostname === 'signin.aws'
+        || hostname.endsWith('.signin.aws.amazon.com')
+        || hostname.endsWith('.signin.aws');
+    }
+
+    async function getActiveKiroRegisterTabId() {
+      if (!chrome?.tabs?.query) {
+        return null;
+      }
+      const queryAttempts = [
+        { active: true, lastFocusedWindow: true },
+        { active: true, currentWindow: true },
+        { active: true },
+      ];
+      for (const queryInfo of queryAttempts) {
+        const tabs = await chrome.tabs.query(queryInfo).catch(() => []);
+        const matchedTab = (Array.isArray(tabs) ? tabs : []).find((tab) => (
+          Number.isInteger(tab?.id) && isKiroRegisterCandidateUrl(tab?.url)
+        ));
+        if (Number.isInteger(matchedTab?.id)) {
+          return matchedTab.id;
+        }
+      }
+      return null;
+    }
+
     async function getExecutionState(state = {}) {
       if (state && typeof state === 'object' && !Array.isArray(state) && Object.keys(state).length) {
         return state;
@@ -519,6 +565,17 @@
       if (Number.isInteger(tabId) && await isSpecificTabAlive(tabId)) {
         await registerTab(KIRO_REGISTER_PAGE_SOURCE_ID, tabId);
         return tabId;
+      }
+
+      const activeKiroTabId = await getActiveKiroRegisterTabId();
+      if (Number.isInteger(activeKiroTabId)) {
+        await registerTab(KIRO_REGISTER_PAGE_SOURCE_ID, activeKiroTabId);
+        await setState(mergeRuntimePatch(state, {
+          session: {
+            registerTabId: activeKiroTabId,
+          },
+        }));
+        return activeKiroTabId;
       }
 
       if (!loginUrl) {

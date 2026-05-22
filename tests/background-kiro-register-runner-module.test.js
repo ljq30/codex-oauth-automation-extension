@@ -276,6 +276,94 @@ test('kiro verification polling uses the registration email field instead of pag
   assert.equal(getKiroRuntime(completedPayload).register?.email, 'skater-twine-carve@duck.com');
 });
 
+test('kiro verification step can adopt the active AWS verify-otp page without step 1 runtime', async () => {
+  const api = loadRegisterRunnerApi();
+  const currentState = {
+    email: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+    registrationEmailState: {
+      current: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+      previous: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+      source: 'manual',
+      updatedAt: Date.now(),
+    },
+  };
+  const sentMessages = [];
+  const statePatches = [];
+  const registeredTabs = [];
+  const pollPayloads = [];
+  let completedPayload = null;
+  const runner = api.createKiroRegisterRunner({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        query: async () => [{
+          id: 301,
+          active: true,
+          url: 'https://profile.aws.amazon.com/?workflowID=b4e8f9ff-3d60-40ce-90ec-d2113d951b08#/signup/verify-otp',
+        }],
+        update: async () => {},
+      },
+    },
+    completeNodeFromBackground: async (_nodeId, payload) => {
+      completedPayload = payload;
+    },
+    getMailConfig: () => ({
+      provider: 'cloudflare-temp-email',
+      source: 'cloudflare-temp-email',
+      label: 'Cloudflare Temp Email',
+    }),
+    getState: async () => currentState,
+    getTabId: async () => null,
+    isTabAlive: async () => false,
+    pollCloudflareTempEmailVerificationCode: async (_step, _state, payload) => {
+      pollPayloads.push(payload);
+      return { code: '248680', emailTimestamp: 2000, mailId: 'mail-active' };
+    },
+    registerTab: async (source, tabId) => {
+      registeredTabs.push({ source, tabId });
+    },
+    sendToContentScriptResilient: async (_sourceId, message) => {
+      sentMessages.push(message);
+      if (message.type === 'ENSURE_KIRO_PAGE_STATE') {
+        return {
+          state: 'register_otp_page',
+          url: 'https://profile.aws.amazon.com/?workflowID=b4e8f9ff-3d60-40ce-90ec-d2113d951b08#/signup/verify-otp',
+          email: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+        };
+      }
+      if (message.type === 'EXECUTE_NODE') {
+        return { submitted: true, state: 'verification_submitted' };
+      }
+      if (message.type === 'ENSURE_KIRO_STATE_CHANGE') {
+        return {
+          state: 'create_password_page',
+          url: 'https://profile.aws.amazon.com/?workflowID=b4e8f9ff-3d60-40ce-90ec-d2113d951b08#/signup/create-password',
+          email: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+        };
+      }
+      return {};
+    },
+    setState: async (patch) => {
+      statePatches.push(patch);
+    },
+  });
+
+  await runner.executeKiroSubmitVerificationCode({
+    nodeId: 'kiro-submit-verification-code',
+    ...currentState,
+  });
+
+  assert.deepEqual(registeredTabs, [{ source: 'kiro-register-page', tabId: 301 }]);
+  assert.equal(getKiroRuntime(statePatches[0]).session?.registerTabId, 301);
+  assert.equal(pollPayloads[0].targetEmail, 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech');
+  assert.equal(sentMessages.some((message) => (
+    message.type === 'EXECUTE_NODE'
+      && message.nodeId === 'kiro-submit-verification-code'
+      && message.payload?.code === '248680'
+  )), true);
+  assert.equal(getKiroRuntime(completedPayload).register?.email, 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech');
+});
+
 test('kiro submit-email reuses the step 1 register tab even when the source registry was reset', async () => {
   const api = loadRegisterRunnerApi();
   const currentState = {
