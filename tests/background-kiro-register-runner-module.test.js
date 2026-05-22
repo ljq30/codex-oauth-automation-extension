@@ -364,6 +364,110 @@ test('kiro verification step can adopt the active AWS verify-otp page without st
   assert.equal(getKiroRuntime(completedPayload).register?.email, 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech');
 });
 
+test('kiro verification step reinjects the register driver when only the generic content script responds', async () => {
+  const api = loadRegisterRunnerApi();
+  const currentState = {
+    email: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+    registrationEmailState: {
+      current: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+      previous: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+      source: 'manual',
+      updatedAt: Date.now(),
+    },
+    runtimeState: {
+      flowState: {
+        kiro: {
+          session: {
+            registerTabId: 302,
+          },
+        },
+      },
+    },
+  };
+  const sentMessages = [];
+  const injectedScripts = [];
+  const pollPayloads = [];
+  let completedPayload = null;
+  const runner = api.createKiroRegisterRunner({
+    addLog: async () => {},
+    chrome: {
+      scripting: {
+        executeScript: async (payload) => {
+          injectedScripts.push(payload);
+        },
+      },
+      tabs: {
+        get: async (tabId) => ({
+          id: tabId,
+          url: 'https://profile.aws.amazon.com/?workflowID=b4e8f9ff-3d60-40ce-90ec-d2113d951b08#/signup/verify-otp',
+        }),
+        update: async () => {},
+      },
+    },
+    completeNodeFromBackground: async (_nodeId, payload) => {
+      completedPayload = payload;
+    },
+    getMailConfig: () => ({
+      provider: 'cloudflare-temp-email',
+      source: 'cloudflare-temp-email',
+      label: 'Cloudflare Temp Email',
+    }),
+    getState: async () => currentState,
+    getTabId: async () => 302,
+    isTabAlive: async () => true,
+    KIRO_REGISTER_INJECT_FILES: [
+      'content/utils.js',
+      'flows/kiro/content/register-page.js',
+    ],
+    pollCloudflareTempEmailVerificationCode: async (_step, _state, payload) => {
+      pollPayloads.push(payload);
+      return { code: '248680', emailTimestamp: 2000, mailId: 'mail-reinject' };
+    },
+    sendToContentScriptResilient: async (_sourceId, message) => {
+      sentMessages.push(message);
+      const ensureCount = sentMessages.filter((entry) => entry.type === 'ENSURE_KIRO_PAGE_STATE').length;
+      if (message.type === 'ENSURE_KIRO_PAGE_STATE' && ensureCount === 1) {
+        return undefined;
+      }
+      if (message.type === 'ENSURE_KIRO_PAGE_STATE') {
+        return {
+          state: 'register_otp_page',
+          url: 'https://profile.aws.amazon.com/?workflowID=b4e8f9ff-3d60-40ce-90ec-d2113d951b08#/signup/verify-otp',
+          email: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+        };
+      }
+      if (message.type === 'EXECUTE_NODE') {
+        return { submitted: true, state: 'verification_submitted' };
+      }
+      if (message.type === 'ENSURE_KIRO_STATE_CHANGE') {
+        return {
+          state: 'create_password_page',
+          url: 'https://profile.aws.amazon.com/?workflowID=b4e8f9ff-3d60-40ce-90ec-d2113d951b08#/signup/create-password',
+          email: 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech',
+        };
+      }
+      return {};
+    },
+    setState: async () => {},
+    sleepWithStop: async () => {},
+  });
+
+  await runner.executeKiroSubmitVerificationCode({
+    nodeId: 'kiro-submit-verification-code',
+    ...currentState,
+  });
+
+  assert.equal(sentMessages.filter((message) => message.type === 'ENSURE_KIRO_PAGE_STATE').length, 2);
+  assert.equal(injectedScripts.length, 2);
+  assert.deepEqual(injectedScripts[0].args, ['kiro-register-page']);
+  assert.deepEqual(injectedScripts[1].files, [
+    'content/utils.js',
+    'flows/kiro/content/register-page.js',
+  ]);
+  assert.equal(pollPayloads[0].targetEmail, 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech');
+  assert.equal(getKiroRuntime(completedPayload).register?.email, 'tmp3x58ft2ivc@edu.email.qlhazycoder.tech');
+});
+
 test('kiro submit-email reuses the step 1 register tab even when the source registry was reset', async () => {
   const api = loadRegisterRunnerApi();
   const currentState = {

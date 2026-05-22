@@ -601,6 +601,73 @@
       return tabId;
     }
 
+    async function injectKiroRegisterContentScripts(tabId) {
+      if (
+        !Number.isInteger(tabId)
+        || !chrome?.scripting?.executeScript
+        || !Array.isArray(KIRO_REGISTER_INJECT_FILES)
+        || !KIRO_REGISTER_INJECT_FILES.length
+      ) {
+        return false;
+      }
+
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        func: (injectedSource) => {
+          window.__MULTIPAGE_SOURCE = injectedSource;
+        },
+        args: [KIRO_REGISTER_PAGE_SOURCE_ID],
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: KIRO_REGISTER_INJECT_FILES,
+      });
+      await sleepWithStop(250);
+      return true;
+    }
+
+    function hasKiroRegisterPageState(result = {}) {
+      return Boolean(result && typeof result === 'object' && cleanString(result.state));
+    }
+
+    async function sendKiroStateDriverMessage(tabId, message, options = {}) {
+      const {
+        timeoutBudget,
+        timeoutMs = 30000,
+      } = options;
+      let result = await sendToContentScriptResilient(KIRO_REGISTER_PAGE_SOURCE_ID, message, {
+        timeoutMs,
+        retryDelayMs: 700,
+        onRetryableError: buildKiroRetryRecovery(tabId, {
+          ...options,
+          timeoutBudget,
+        }),
+        logMessage: options.readyLogMessage || '正在等待 Kiro 页面进入下一状态...',
+      });
+
+      if (!hasKiroRegisterPageState(result) && !result?.error) {
+        await log('Kiro 注册页通用脚本已响应，但专用页面识别脚本未返回状态，正在重新注入 Kiro 注册页识别脚本...', 'warn');
+        await injectKiroRegisterContentScripts(tabId);
+        result = await sendToContentScriptResilient(KIRO_REGISTER_PAGE_SOURCE_ID, message, {
+          timeoutMs: timeoutBudget?.getRemainingMs?.(1000) || timeoutMs,
+          retryDelayMs: 700,
+          onRetryableError: buildKiroRetryRecovery(tabId, {
+            ...options,
+            timeoutBudget,
+          }),
+          logMessage: options.readyLogMessage || '正在等待 Kiro 页面进入下一状态...',
+        });
+      }
+
+      if (result?.error) {
+        throw new Error(result.error);
+      }
+      if (!hasKiroRegisterPageState(result)) {
+        throw new Error('Kiro 注册页专用页面识别脚本未返回页面状态，请刷新当前 AWS 页面或重新执行当前步骤。');
+      }
+      return result;
+    }
+
     async function reattachKiroRegisterPage(tabId, options = {}) {
       if (!Number.isInteger(tabId)) {
         throw new Error('缺少 Kiro 注册页标签页，无法重新连接内容脚本。');
@@ -675,7 +742,7 @@
         };
       }
       const stateWaitTimeoutMs = timeoutBudget.getRemainingMs(1000);
-      const result = await sendToContentScriptResilient(KIRO_REGISTER_PAGE_SOURCE_ID, {
+      const message = {
         type: 'ENSURE_KIRO_PAGE_STATE',
         step: options.step || 0,
         source: 'background',
@@ -685,19 +752,13 @@
           retryDelayMs: Number(options.pageRetryDelayMs) || 250,
           timeoutMessage: options.timeoutMessage || '',
         },
-      }, {
+      };
+
+      return sendKiroStateDriverMessage(tabId, message, {
+        ...options,
+        timeoutBudget,
         timeoutMs: stateWaitTimeoutMs,
-        retryDelayMs: 700,
-        onRetryableError: buildKiroRetryRecovery(tabId, {
-          ...options,
-          timeoutBudget,
-        }),
-        logMessage: options.readyLogMessage || '正在等待 Kiro 页面进入下一状态...',
       });
-      if (result?.error) {
-        throw new Error(result.error);
-      }
-      return result || { state: '', url: '' };
     }
 
     async function waitForKiroPageChange(tabId, options = {}) {
@@ -730,7 +791,7 @@
         return { state: '', url: '' };
       }
       const stateWaitTimeoutMs = timeoutBudget.getRemainingMs(1000);
-      const result = await sendToContentScriptResilient(KIRO_REGISTER_PAGE_SOURCE_ID, {
+      const message = {
         type: 'ENSURE_KIRO_STATE_CHANGE',
         step: options.step || 0,
         source: 'background',
@@ -741,19 +802,13 @@
           returnOnCodeInvalid: Boolean(options.returnOnCodeInvalid),
           timeoutMessage: options.timeoutMessage || '',
         },
-      }, {
+      };
+      return sendKiroStateDriverMessage(tabId, message, {
+        ...options,
+        timeoutBudget,
         timeoutMs: stateWaitTimeoutMs,
-        retryDelayMs: 700,
-        onRetryableError: buildKiroRetryRecovery(tabId, {
-          ...options,
-          timeoutBudget,
-        }),
-        logMessage: options.readyLogMessage || '正在等待 Kiro 页面完成跳转...',
+        readyLogMessage: options.readyLogMessage || '正在等待 Kiro 页面完成跳转...',
       });
-      if (result?.error) {
-        throw new Error(result.error);
-      }
-      return result || { state: '', url: '' };
     }
 
     async function readKiroRegisterPageState(tabId, options = {}) {
