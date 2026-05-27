@@ -87,6 +87,7 @@ function createRouter(overrides = {}) {
     }
     return next;
   };
+  let currentState = normalizeState(overrides.state || { nodeStatuses: { 'fill-password': 'pending' } });
 
   const router = api.createMessageRouter({
     addLog: async (message, level, options = {}) => {
@@ -138,13 +139,13 @@ function createRouter(overrides = {}) {
     getCurrentLuckmailPurchase: () => null,
     getPendingAutoRunTimerPlan: () => null,
     getSourceLabel: () => '',
-    getState: async () => normalizeState(overrides.state || { nodeStatuses: { 'fill-password': 'pending' } }),
+    getState: async () => normalizeState(currentState),
     getNodeIdsForState: overrides.getNodeIdsForState || (() => ['open-chatgpt', 'submit-signup-email', 'fill-password', 'fetch-signup-code', 'fill-profile', 'wait-registration-success', 'oauth-login', 'fetch-login-code', 'confirm-oauth', 'platform-verify']),
     getStepIdByNodeIdForState: overrides.getStepIdByNodeIdForState || ((nodeId, state = {}) => (stepByNode && Object.prototype.hasOwnProperty.call(stepByNode, nodeId))
       ? stepByNode[nodeId] || 0
       : (state.plusModeEnabled ? plusStepByNode : normalStepByNode)[nodeId] || 0),
     getStepDefinitionForState: overrides.getStepDefinitionForState,
-    getStepIdsForState: overrides.getStepIdsForState,
+    getStepIdsForState: overrides.getStepIdsForState || (() => [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
     getLastStepIdForState: overrides.getLastStepIdForState,
     getTabId: overrides.getTabId || (async () => null),
     getStopRequested: () => false,
@@ -204,11 +205,24 @@ function createRouter(overrides = {}) {
     setPersistentSettings: async () => {},
     setState: async (updates) => {
       events.stateUpdates.push(updates);
+      currentState = normalizeState({
+        ...currentState,
+        ...updates,
+        nodeStatuses: updates.nodeStatuses ? { ...updates.nodeStatuses } : currentState.nodeStatuses,
+        stepStatuses: updates.stepStatuses ? { ...updates.stepStatuses } : currentState.stepStatuses,
+      });
     },
     setNodeStatus: async (nodeId, status) => {
       events.nodeStatuses.push({ nodeId, status });
       const step = getStepForNode(nodeId);
       events.stepStatuses.push({ step, status });
+      currentState = normalizeState({
+        ...currentState,
+        nodeStatuses: {
+          ...(currentState.nodeStatuses || {}),
+          [nodeId]: status,
+        },
+      });
     },
     skipAutoRunCountdown: async () => false,
     skipNode: async () => {},
@@ -223,7 +237,7 @@ function createRouter(overrides = {}) {
     }),
   });
 
-  return { router, events };
+  return { router, events, getState: () => normalizeState(currentState) };
 }
 
 test('message router skips step 3 when step 2 lands on verification page', async () => {
@@ -572,6 +586,159 @@ test('message router marks step 3 failed when post-submit finalize fails', async
   ]);
   assert.equal(events.logs.some(({ message, nodeId }) => /失败：步骤 3 提交后仍停留在密码页。/.test(message) && nodeId === 'fill-password'), true);
   assert.deepStrictEqual(response, { ok: true, error: '步骤 3 提交后仍停留在密码页。' });
+});
+
+test('message router skips signup tail after finalize confirms phone login password page advanced', async () => {
+  const finalizeResult = { ready: true, state: 'phone_verification_page' };
+  const { router, events } = createRouter({
+    state: {
+      signupMethod: 'phone',
+      accountIdentifierType: 'phone',
+      accountIdentifier: '+66959916439',
+      signupPhoneNumber: '+66959916439',
+      nodeStatuses: {
+        'fill-password': 'running',
+        'fetch-signup-code': 'pending',
+        'fill-profile': 'pending',
+        'wait-registration-success': 'pending',
+      },
+    },
+    finalizeStep3Completion: async (payload) => {
+      events.finalizePayloads.push(payload);
+      return finalizeResult;
+    },
+  });
+
+  const response = await router.handleMessage({
+    type: 'NODE_COMPLETE',
+    nodeId: 'fill-password',
+    source: 'openai-auth',
+    payload: {
+      nodeId: 'fill-password',
+      accountIdentifierType: 'phone',
+      accountIdentifier: '+66959916439',
+      signupPhoneNumber: '+66959916439',
+      signupVerificationRequestedAt: 123456,
+      deferredSubmit: true,
+      passwordPageUrl: 'https://auth.openai.com/log-in/password',
+      passwordPagePath: '/log-in/password',
+      passwordPageMode: 'login',
+    },
+  }, {});
+
+  assert.deepStrictEqual(response, { ok: true });
+  assert.deepStrictEqual(events.finalizePayloads.map((payload) => payload.passwordPageMode), ['login']);
+  assert.deepStrictEqual(events.stepStatuses, [
+    { step: 3, status: 'completed' },
+    { step: 4, status: 'skipped' },
+    { step: 5, status: 'skipped' },
+    { step: 6, status: 'skipped' },
+  ]);
+  assert.equal(events.stateUpdates.some((updates) => updates.signupVerificationRequestedAt === 123456), false);
+  assert.equal(events.stateUpdates.some((updates) => updates.signupVerificationRequestedAt === null), true);
+  assert.equal(events.logs.some(({ message }) => /手机号密码提交后已确认账号进入登录后续状态/.test(message)), true);
+  assert.equal(events.notifyCompletions[0].payload.passwordLoginFlow, true);
+  assert.equal(events.notifyCompletions[0].payload.skipRegistrationFlow, true);
+  assert.equal(events.notifyCompletions[0].payload.signupVerificationRequestedAt, null);
+  assert.equal(events.notifyCompletions[0].payload.state, 'phone_verification_page');
+});
+
+test('message router keeps signup tail when phone password submit used create-account page', async () => {
+  const finalizeResult = { ready: true, state: 'verification' };
+  const { router, events } = createRouter({
+    state: {
+      signupMethod: 'phone',
+      accountIdentifierType: 'phone',
+      accountIdentifier: '+66959916439',
+      signupPhoneNumber: '+66959916439',
+      nodeStatuses: {
+        'fill-password': 'running',
+        'fetch-signup-code': 'pending',
+        'fill-profile': 'pending',
+        'wait-registration-success': 'pending',
+      },
+    },
+    finalizeStep3Completion: async (payload) => {
+      events.finalizePayloads.push(payload);
+      return finalizeResult;
+    },
+  });
+
+  const response = await router.handleMessage({
+    type: 'NODE_COMPLETE',
+    nodeId: 'fill-password',
+    source: 'openai-auth',
+    payload: {
+      nodeId: 'fill-password',
+      accountIdentifierType: 'phone',
+      accountIdentifier: '+66959916439',
+      signupPhoneNumber: '+66959916439',
+      signupVerificationRequestedAt: 123456,
+      deferredSubmit: true,
+      passwordPageUrl: 'https://auth.openai.com/create-account/password',
+      passwordPagePath: '/create-account/password',
+      passwordPageMode: 'signup',
+    },
+  }, {});
+
+  assert.deepStrictEqual(response, { ok: true });
+  assert.deepStrictEqual(events.finalizePayloads.map((payload) => payload.passwordPageMode), ['signup']);
+  assert.deepStrictEqual(events.stepStatuses, [
+    { step: 3, status: 'completed' },
+  ]);
+  assert.equal(events.stateUpdates.some((updates) => updates.signupVerificationRequestedAt === 123456), true);
+  assert.equal(events.stateUpdates.some((updates) => updates.signupVerificationRequestedAt === null), false);
+  assert.equal(events.notifyCompletions[0].payload.state, 'verification');
+  assert.equal(events.notifyCompletions[0].payload.skipRegistrationFlow, undefined);
+});
+
+test('message router does not skip signup tail when login password finalize fails', async () => {
+  const { router, events } = createRouter({
+    state: {
+      signupMethod: 'phone',
+      accountIdentifierType: 'phone',
+      accountIdentifier: '+66959916439',
+      signupPhoneNumber: '+66959916439',
+      nodeStatuses: {
+        'fill-password': 'running',
+        'fetch-signup-code': 'pending',
+        'fill-profile': 'pending',
+        'wait-registration-success': 'pending',
+      },
+    },
+    finalizeStep3Completion: async (payload) => {
+      events.finalizePayloads.push(payload);
+      throw new Error('步骤 3 收尾仍停留在登录密码页。');
+    },
+  });
+
+  const response = await router.handleMessage({
+    type: 'NODE_COMPLETE',
+    nodeId: 'fill-password',
+    source: 'openai-auth',
+    payload: {
+      nodeId: 'fill-password',
+      accountIdentifierType: 'phone',
+      accountIdentifier: '+66959916439',
+      signupPhoneNumber: '+66959916439',
+      signupVerificationRequestedAt: null,
+      deferredSubmit: true,
+      passwordPageUrl: 'https://auth.openai.com/log-in/password',
+      passwordPagePath: '/log-in/password',
+      passwordPageMode: 'login',
+      passwordLoginFlow: true,
+    },
+  }, {});
+
+  assert.deepStrictEqual(response, { ok: true, error: '步骤 3 收尾仍停留在登录密码页。' });
+  assert.deepStrictEqual(events.finalizePayloads.map((payload) => payload.passwordPageMode), ['login']);
+  assert.deepStrictEqual(events.stepStatuses, [
+    { step: 3, status: 'failed' },
+  ]);
+  assert.equal(events.stepStatuses.some(({ step, status }) => step === 4 && status === 'skipped'), false);
+  assert.equal(events.stepStatuses.some(({ step, status }) => step === 5 && status === 'skipped'), false);
+  assert.equal(events.stepStatuses.some(({ step, status }) => step === 6 && status === 'skipped'), false);
+  assert.equal(events.notifyCompletions.length, 0);
 });
 
 test('message router does not duplicate step 3 mismatch failure log after finalize already failed', async () => {
