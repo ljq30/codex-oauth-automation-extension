@@ -285,7 +285,6 @@ test('phone verification helper acquires, polls and releases MaDao activation th
   };
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async () => {},
-    createMaDaoProvider: maDaoModule.createProvider,
     ensureStep8SignupPageReady: async () => {},
     fetchImpl: async (url, options = {}) => {
       const parsedUrl = new URL(url);
@@ -363,6 +362,161 @@ test('phone verification helper acquires, polls and releases MaDao activation th
   assert.equal(requests[0].options.headers.Authorization, 'Bearer secret-token');
   assert.deepStrictEqual(requests[1].body, { ticket_id: 'madao-1' });
   assert.deepStrictEqual(requests[2].body, { ticket_id: 'madao-1', action: 'finish' });
+});
+
+test('phone verification helper keeps MaDao routing replacement country as ISO code on resubmit', async () => {
+  const requests = [];
+  const messages = [];
+  let currentState = {
+    phoneSmsProvider: 'madao',
+    madaoBaseUrl: 'http://127.0.0.1:7822/',
+    madaoHttpSecret: 'secret-token',
+    madaoMode: 'routing_plan',
+    madaoRoutingPlanId: 'rp-openai',
+    verificationResendCount: 0,
+    phoneVerificationReplacementLimit: 2,
+    phoneCodeWaitSeconds: 15,
+    phoneCodeTimeoutWindows: 1,
+    phoneCodePollIntervalSeconds: 1,
+    phoneCodePollMaxRounds: 1,
+    currentPhoneActivation: null,
+    reusablePhoneActivation: null,
+  };
+  let acquireCalls = 0;
+  let replaceCalls = 0;
+
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    fetchImpl: async (url, options = {}) => {
+      const parsedUrl = new URL(url);
+      const body = options.body ? JSON.parse(options.body) : null;
+      requests.push({ url: parsedUrl, options, body });
+      if (parsedUrl.pathname === '/api/acquire') {
+        acquireCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            ticket_id: 'madao-ticket-routing-1',
+            provider: 'herosms',
+            service: 'openai',
+            country: 'TH',
+            phone_number: '+66950002222',
+            routing_plan_id: 'rp-openai',
+            routing_plan_name: 'OpenAI Plan',
+            routing_item_id: 'route-1',
+            status: 'waiting_code',
+          }),
+        };
+      }
+      if (parsedUrl.pathname === '/api/poll') {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            ticket_id: body.ticket_id,
+            provider: body.ticket_id === 'madao-ticket-routing-1' ? 'herosms' : 'smsbower',
+            status: body.ticket_id === 'madao-ticket-routing-1' ? 'waiting_code' : 'code_received',
+            code: body.ticket_id === 'madao-ticket-routing-1' ? null : '654321',
+          }),
+        };
+      }
+      if (parsedUrl.pathname === '/api/routing/replace') {
+        replaceCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({
+            current_ticket_id: 'madao-ticket-routing-1',
+            current_ticket_release: {
+              ticket_id: 'madao-ticket-routing-1',
+              provider: 'herosms',
+              status: 'cancelled',
+            },
+            next_ticket: {
+              ticket_id: 'madao-ticket-routing-2',
+              provider: 'smsbower',
+              service: 'openai',
+              country: 'VN',
+              phone_number: '+84943328460',
+              routing_plan_id: 'rp-openai',
+              routing_plan_name: 'OpenAI Plan',
+              routing_item_id: 'route-2',
+              status: 'waiting_code',
+            },
+          }),
+        };
+      }
+      if (parsedUrl.pathname === '/api/release') {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ ok: true }),
+        };
+      }
+      throw new Error(`Unexpected MaDao path: ${parsedUrl.pathname}`);
+    },
+    getOAuthFlowStepTimeoutMs: async (defaultTimeoutMs) => defaultTimeoutMs,
+    getState: async () => ({ ...currentState }),
+    sendToContentScriptResilient: async (_source, message) => {
+      messages.push(message);
+      if (message.type === 'STEP8_GET_STATE') {
+        return {
+          addPhonePage: true,
+          phoneVerificationPage: false,
+          url: 'https://auth.openai.com/add-phone',
+        };
+      }
+      if (message.type === 'SUBMIT_PHONE_NUMBER') {
+        return {
+          phoneVerificationPage: true,
+          url: 'https://auth.openai.com/phone-verification',
+        };
+      }
+      if (message.type === 'RETURN_TO_ADD_PHONE') {
+        return {
+          addPhonePage: true,
+          url: 'https://auth.openai.com/add-phone',
+        };
+      }
+      if (message.type === 'SUBMIT_PHONE_VERIFICATION_CODE') {
+        return {
+          success: true,
+          consentReady: true,
+          url: 'https://auth.openai.com/authorize',
+        };
+      }
+      throw new Error(`Unexpected content-script message: ${message.type}`);
+    },
+    setState: async (updates) => {
+      currentState = { ...currentState, ...updates };
+    },
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const result = await helpers.completePhoneVerificationFlow(1, {
+    addPhonePage: true,
+    phoneVerificationPage: false,
+    url: 'https://auth.openai.com/add-phone',
+  });
+
+  assert.deepStrictEqual(result, {
+    success: true,
+    consentReady: true,
+    url: 'https://auth.openai.com/authorize',
+  });
+  assert.equal(acquireCalls, 1);
+  assert.equal(replaceCalls, 1);
+  const phoneSubmissions = messages.filter((message) => message.type === 'SUBMIT_PHONE_NUMBER');
+  assert.equal(phoneSubmissions.length, 2);
+  assert.equal(phoneSubmissions[0].payload.phoneNumber, '+66950002222');
+  assert.equal(phoneSubmissions[0].payload.countryId, 'TH');
+  assert.equal(phoneSubmissions[0].payload.countryLabel, 'Thailand');
+  assert.equal(phoneSubmissions[1].payload.phoneNumber, '+84943328460');
+  assert.equal(phoneSubmissions[1].payload.countryId, 'VN');
+  assert.equal(phoneSubmissions[1].payload.countryLabel, 'Vietnam');
 });
 
 test('signup phone helper persists signup runtime state without touching add-phone activation', async () => {

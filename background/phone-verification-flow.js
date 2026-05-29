@@ -107,14 +107,14 @@
     const PHONE_SMS_FAILURE_SKIP_THRESHOLD = 2;
     const MAX_ACTIVATION_PRICE_HINTS = 256;
     const HERO_SMS_COUNTRY_BY_PHONE_PREFIX = Object.freeze([
-      { prefix: '84', id: 10, label: 'Vietnam' },
-      { prefix: '66', id: 52, label: 'Thailand' },
-      { prefix: '62', id: 6, label: 'Indonesia' },
-      { prefix: '44', id: 16, label: 'United Kingdom' },
-      { prefix: '81', id: 151, label: 'Japan' },
-      { prefix: '49', id: 43, label: 'Germany' },
-      { prefix: '33', id: 73, label: 'France' },
-      { prefix: '1', id: 187, label: 'USA' },
+      { prefix: '84', id: 10, iso: 'VN', label: 'Vietnam' },
+      { prefix: '66', id: 52, iso: 'TH', label: 'Thailand' },
+      { prefix: '62', id: 6, iso: 'ID', label: 'Indonesia' },
+      { prefix: '44', id: 16, iso: 'GB', label: 'United Kingdom' },
+      { prefix: '81', id: 151, iso: 'JP', label: 'Japan' },
+      { prefix: '49', id: 43, iso: 'DE', label: 'Germany' },
+      { prefix: '33', id: 73, iso: 'FR', label: 'France' },
+      { prefix: '1', id: 187, iso: 'US', label: 'USA' },
     ]);
     const activationPriceHintsByKey = new Map();
     let activePhoneVerificationLogStep = null;
@@ -587,6 +587,44 @@
       return fallbackNormalized || DEFAULT_HERO_SMS_OPERATOR;
     }
 
+    function normalizeMaDaoCountryCode(value = '', fallback = '') {
+      const raw = String(value || '').trim() || String(fallback || '').trim();
+      if (!raw) {
+        return '';
+      }
+      if (/^[a-z]{2}$/i.test(raw)) {
+        return raw.toUpperCase();
+      }
+      return raw;
+    }
+
+    function getRegionDisplayName(regionCode, locale = 'en') {
+      const normalizedRegionCode = normalizeMaDaoCountryCode(regionCode, '');
+      const normalizedLocale = String(locale || '').trim();
+      if (!/^[A-Z]{2}$/.test(normalizedRegionCode) || !normalizedLocale || typeof Intl?.DisplayNames !== 'function') {
+        return '';
+      }
+      try {
+        return String(
+          new Intl.DisplayNames([normalizedLocale], { type: 'region' }).of(normalizedRegionCode) || ''
+        ).trim();
+      } catch {
+        return '';
+      }
+    }
+
+    function normalizeMaDaoCountryLabel(value = '', countryCode = '') {
+      const label = String(value || '').trim();
+      if (label) {
+        return label;
+      }
+      const normalizedCountryCode = normalizeMaDaoCountryCode(countryCode, '');
+      if (!normalizedCountryCode) {
+        return '';
+      }
+      return getRegionDisplayName(normalizedCountryCode, 'en') || normalizedCountryCode;
+    }
+
     function inferHeroSmsCountryFromPhoneNumber(phoneNumber = '') {
       const digits = String(phoneNumber || '').replace(/\D+/g, '');
       if (!digits) {
@@ -598,7 +636,19 @@
       }
       return {
         id: normalizeCountryId(match.id, 0),
+        iso: normalizeMaDaoCountryCode(match.iso, ''),
         label: normalizeCountryLabel(match.label, `Country #${match.id}`),
+      };
+    }
+
+    function inferMaDaoCountryFromPhoneNumber(phoneNumber = '') {
+      const inferred = inferHeroSmsCountryFromPhoneNumber(phoneNumber);
+      if (!inferred?.iso) {
+        return null;
+      }
+      return {
+        id: inferred.iso,
+        label: normalizeMaDaoCountryLabel(inferred.label, inferred.iso),
       };
     }
 
@@ -1391,6 +1441,9 @@
       const rawProvider = String(record.provider || '').trim();
       const provider = normalizePhoneSmsProvider(rawProvider);
       const rawCountryId = record.countryId ?? record.country;
+      const inferredCountry = provider === PHONE_SMS_PROVIDER_MADAO
+        ? inferMaDaoCountryFromPhoneNumber(phoneNumber)
+        : null;
       const fallbackCountryId = provider === PHONE_SMS_PROVIDER_FIVE_SIM
         ? 'england'
         : (provider === PHONE_SMS_PROVIDER_MADAO ? '' : HERO_SMS_COUNTRY_ID);
@@ -1412,10 +1465,13 @@
             ? normalizeNexSmsCountryId(rawCountryId, 0)
             : (
               provider === PHONE_SMS_PROVIDER_MADAO
-                ? String(rawCountryId || '').trim()
+                ? normalizeMaDaoCountryCode(rawCountryId, inferredCountry?.id || '')
                 : normalizeCountryId(rawCountryId, fallbackCountryId)
             )
         );
+      const normalizedCountryLabel = provider === PHONE_SMS_PROVIDER_MADAO
+        ? normalizeMaDaoCountryLabel(countryLabel, countryId)
+        : countryLabel;
       const ignoredPhoneCodeKeys = normalizeStringList(record.ignoredPhoneCodeKeys);
       return {
         activationId,
@@ -1424,7 +1480,7 @@
         serviceCode,
         countryId,
         ...(provider === PHONE_SMS_PROVIDER_FIVE_SIM ? { countryCode: countryId } : {}),
-        ...(countryLabel ? { countryLabel } : {}),
+        ...(normalizedCountryLabel ? { countryLabel: normalizedCountryLabel } : {}),
         successfulUses: normalizeUseCount(record.successfulUses),
         maxUses: Math.max(1, Math.floor(Number(record.maxUses) || DEFAULT_PHONE_NUMBER_MAX_USES)),
         ...(expiresAt > 0 ? { expiresAt } : {}),
@@ -4888,6 +4944,18 @@
       const providerId = getActivationProviderId(activation, fallbackState);
       const candidates = resolveCountryCandidatesForProvider(fallbackState, providerId);
       if (activation && typeof activation === 'object') {
+        if (providerId === PHONE_SMS_PROVIDER_MADAO) {
+          const countryId = normalizeMaDaoCountryCode(activation.countryId ?? activation.country, '');
+          const inferredCountry = inferMaDaoCountryFromPhoneNumber(activation.phoneNumber);
+          const resolvedCountryId = countryId || inferredCountry?.id || '';
+          return {
+            id: resolvedCountryId,
+            label: normalizeMaDaoCountryLabel(
+              activation.countryLabel || inferredCountry?.label || '',
+              resolvedCountryId
+            ),
+          };
+        }
         if (providerId === PHONE_SMS_PROVIDER_FIVE_SIM) {
           const countryId = normalizeFiveSimCountryId(activation.countryId, '');
           if (countryId) {
@@ -4896,14 +4964,6 @@
             return {
               id: countryId,
               label: normalizeFiveSimCountryLabel(activation.countryLabel, countryId),
-            };
-          }
-        } else if (providerId === PHONE_SMS_PROVIDER_MADAO) {
-          const countryId = String(activation.countryId || '').trim();
-          if (countryId) {
-            return {
-              id: countryId,
-              label: normalizeCountryLabel(activation.countryLabel, countryId),
             };
           }
         } else {
@@ -6668,8 +6728,8 @@
           return normalizedCountryId >= 0 ? `${normalizedProvider}:${normalizedCountryId}` : '';
         }
         if (normalizedProvider === PHONE_SMS_PROVIDER_MADAO) {
-          const normalizedCountryId = String(countryId || '').trim();
-          return normalizedCountryId ? `${normalizedProvider}:${normalizedCountryId}` : '';
+          const normalizedCountryCode = normalizeMaDaoCountryCode(countryId, '');
+          return normalizedCountryCode ? `${normalizedProvider}:${normalizedCountryCode}` : '';
         }
         const normalizedCountryId = normalizeCountryId(countryId, 0);
         return normalizedCountryId > 0 ? `${normalizedProvider}:${normalizedCountryId}` : '';
@@ -6712,7 +6772,7 @@
           return matched?.label || `Country #${normalizedCountryId}`;
         }
         if (normalizedProvider === PHONE_SMS_PROVIDER_MADAO) {
-          return normalizedCountryKey || 'MaDao';
+          return normalizeMaDaoCountryLabel('', normalizedCountryKey) || normalizedCountryKey || 'Unknown country';
         }
         const normalizedCountryId = normalizeCountryId(normalizedCountryKey, 0);
         const matched = resolveCountryCandidates(state)
@@ -6816,9 +6876,11 @@
       const getCountryFailureKey = (countryId, providerId = normalizePhoneSmsProvider(state?.phoneSmsProvider)) => (
         normalizePhoneSmsProvider(providerId) === PHONE_SMS_PROVIDER_FIVE_SIM
           ? normalizeFiveSimCountryId(countryId, '')
-          : (normalizePhoneSmsProvider(providerId) === PHONE_SMS_PROVIDER_MADAO
-            ? String(countryId || '').trim()
-            : String(normalizeCountryId(countryId, 0) || ''))
+          : (
+            normalizePhoneSmsProvider(providerId) === PHONE_SMS_PROVIDER_MADAO
+              ? normalizeMaDaoCountryCode(countryId, '')
+              : String(normalizeCountryId(countryId, 0) || '')
+          )
       );
 
       const getCountryFailureCount = (countryId, providerId = normalizePhoneSmsProvider(state?.phoneSmsProvider)) => {

@@ -366,7 +366,6 @@
       routing_plan_id: activation?.madaoRoutingPlanId,
       routing_plan_name: activation?.madaoRoutingPlanName,
       service: activation?.serviceCode,
-      country: activation?.countryId,
     });
     if (!nextTicket) {
       throw new Error('MaDao 返回的下一条路由激活记录无效。');
