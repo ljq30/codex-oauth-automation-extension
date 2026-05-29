@@ -9971,21 +9971,67 @@ function getDownstreamStateResets(step, state = {}) {
     gpcPageStatus: '',
     gpcPageStatusText: '',
   };
+  const oauthRuntimeResets = {
+    oauthUrl: null,
+    cpaOAuthState: null,
+    cpaManagementOrigin: null,
+    sub2apiSessionId: null,
+    sub2apiOAuthState: null,
+    sub2apiGroupId: null,
+    sub2apiGroupIds: [],
+    sub2apiDraftName: null,
+    sub2apiProxyId: null,
+    codex2apiSessionId: null,
+    codex2apiOAuthState: null,
+  };
+  const getNextStepKey = () => {
+    const numericStep = Number(step);
+    const currentNodeId = typeof getNodeIdByStepForState === 'function'
+      ? getNodeIdByStepForState(numericStep, state)
+      : '';
+    if (
+      currentNodeId
+      && typeof getNodeIdsForState === 'function'
+      && typeof getStepIdByNodeIdForState === 'function'
+    ) {
+      const nodeIds = getNodeIdsForState(state);
+      const currentIndex = nodeIds.indexOf(currentNodeId);
+      const nextNodeId = currentIndex >= 0 ? nodeIds[currentIndex + 1] : '';
+      const nextStep = nextNodeId ? getStepIdByNodeIdForState(nextNodeId, state) : null;
+      if (Number.isInteger(nextStep) && nextStep > 0) {
+        return String(getStepExecutionKeyForState(nextStep, state) || '').trim();
+      }
+    }
+    if (typeof getStepIdsForState === 'function') {
+      const stepIds = getStepIdsForState(state);
+      const currentIndex = stepIds.indexOf(numericStep);
+      const nextStep = currentIndex >= 0 ? stepIds[currentIndex + 1] : null;
+      if (Number.isInteger(nextStep) && nextStep > 0) {
+        return String(getStepExecutionKeyForState(nextStep, state) || '').trim();
+      }
+    }
+    return '';
+  };
+  const nextStepKey = getNextStepKey();
+  const isOAuthEntryRestartBoundary = nextStepKey === 'oauth-login' || nextStepKey === 'relogin-bound-email';
+  const oauthEntryRuntimeResets = {
+    ...oauthRuntimeResets,
+    lastLoginCode: null,
+    loginVerificationRequestedAt: null,
+    oauthFlowDeadlineAt: null,
+    oauthFlowDeadlineSourceUrl: null,
+    pendingPhoneActivationConfirmation: null,
+    localhostUrl: null,
+    currentPhoneVerificationCode: '',
+    currentPhoneVerificationCountdownEndsAt: 0,
+    currentPhoneVerificationCountdownWindowIndex: 0,
+    currentPhoneVerificationCountdownWindowTotal: 0,
+  };
 
   if (step <= 1) {
     return {
       ...plusRuntimeResets,
-      oauthUrl: null,
-      cpaOAuthState: null,
-      cpaManagementOrigin: null,
-      sub2apiSessionId: null,
-      sub2apiOAuthState: null,
-      sub2apiGroupId: null,
-      sub2apiGroupIds: [],
-      sub2apiDraftName: null,
-      sub2apiProxyId: null,
-      codex2apiSessionId: null,
-      codex2apiOAuthState: null,
+      ...oauthRuntimeResets,
       flowStartTime: null,
       password: null,
       lastEmailTimestamp: null,
@@ -10056,6 +10102,7 @@ function getDownstreamStateResets(step, state = {}) {
   if (isEarlyRegistrationNode || isBillingNode || isApprovalNode) {
     return {
       ...(isEarlyRegistrationNode ? plusRuntimeResets : {}),
+      ...(isOAuthEntryRestartBoundary ? oauthRuntimeResets : {}),
       ...(isBillingNode ? {
         plusBillingCountryText: '',
         plusBillingAddress: null,
@@ -10090,6 +10137,7 @@ function getDownstreamStateResets(step, state = {}) {
   }
   if (stepKey === 'plus-checkout-return' || stepKey === 'confirm-oauth') {
     return {
+      ...(isOAuthEntryRestartBoundary ? oauthRuntimeResets : {}),
       pendingPhoneActivationConfirmation: null,
       plusReturnUrl: '',
       localhostUrl: null,
@@ -10099,12 +10147,10 @@ function getDownstreamStateResets(step, state = {}) {
       currentPhoneVerificationCountdownWindowTotal: 0,
     };
   }
-  if (
-    stepKey === 'oauth-login'
-    || stepKey === 'fetch-login-code'
-    || stepKey === 'relogin-bound-email'
-    || stepKey === 'fetch-bound-email-login-code'
-  ) {
+  if (stepKey === 'oauth-login' || stepKey === 'relogin-bound-email') {
+    return oauthEntryRuntimeResets;
+  }
+  if (stepKey === 'fetch-login-code' || stepKey === 'fetch-bound-email-login-code') {
     return {
       lastLoginCode: null,
       loginVerificationRequestedAt: null,
@@ -10123,6 +10169,9 @@ function getDownstreamStateResets(step, state = {}) {
       pendingPhoneActivationConfirmation: null,
       localhostUrl: null,
     };
+  }
+  if (isOAuthEntryRestartBoundary) {
+    return oauthEntryRuntimeResets;
   }
   return {};
 }
@@ -14988,6 +15037,10 @@ async function getPostStep6AutoRestartDecision(step, error) {
     const hasTransientTokenExchangeSignal = /token_exchange_user_error|invalid request\.?\s*please try again later/i.test(normalizedMessage);
     return mentionsTokenExchange && (hasTransientNetworkSignal || hasTransientTokenExchangeSignal);
   };
+  const isPlatformVerifyOAuthSessionExpiredError = (errorMessage = '') => {
+    const normalizedMessage = String(errorMessage || '');
+    return /OPENAI_OAUTH_SESSION_NOT_FOUND|session\s+not\s+found\s+or\s+expired|oauth\s+session\s+(?:not\s+found|expired)|missing\s+SUB2API\s+session_id|缺少\s*SUB2API\s*(?:session_id|会话信息)|SUB2API[\s\S]*(?:会话|session)[\s\S]*(?:过期|失效|不存在|not\s+found|expired)/i.test(normalizedMessage);
+  };
   const isPhoneVerificationLocalFailure = (errorMessage = '') => {
     const normalizedMessage = String(errorMessage || '');
     if (isPhoneSmsPlatformRateLimitFailure(normalizedMessage)) {
@@ -15034,11 +15087,15 @@ async function getPostStep6AutoRestartDecision(step, error) {
     && confirmOauthStep > 0
     && confirmOauthStep < normalizedStep
     && isPlatformVerifyTransientRetryError(errorMessage);
+  const shouldRestartFromOAuthLoginStep = currentNodeKey === 'platform-verify'
+    && isPlatformVerifyOAuthSessionExpiredError(errorMessage);
   const restartAnchorStep = shouldRetryFromConfirmStep
     ? confirmOauthStep
-    : (isBoundEmailReloginTailStep && Number.isFinite(boundEmailReloginStep) && boundEmailReloginStep > 0
+    : (shouldRestartFromOAuthLoginStep
+      ? authChainStartStep
+      : (isBoundEmailReloginTailStep && Number.isFinite(boundEmailReloginStep) && boundEmailReloginStep > 0
       ? boundEmailReloginStep
-      : authChainStartStep);
+      : authChainStartStep));
   if (isPhoneSmsPlatformRateLimitFailure(errorMessage)) {
     return {
       shouldRestart: false,

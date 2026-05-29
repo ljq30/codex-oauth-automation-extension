@@ -159,6 +159,7 @@ const bundle = [
   extractFunction('startAutoRunNodeIdleLogWatchdog'),
   extractFunction('runAutoNodeActionWithIdleLogWatchdog'),
   extractFunction('executeNodeAndWaitWithAutoRunIdleLogWatchdog'),
+  extractFunction('getDownstreamStateResets'),
   extractFunction('getPostStep6AutoRestartDecision'),
   NODE_COMPAT_HELPERS,
   extractFunction('getAutoRunWorkflowNodeIds'),
@@ -279,6 +280,7 @@ const events = {
   steps: [],
   logs: [],
   invalidations: [],
+  stateUpdates: [],
   cancellations: [],
   stopBroadcasts: 0,
 };
@@ -330,6 +332,10 @@ async function getTabId() {
 }
 async function invalidateDownstreamAfterStepRestart(step, options = {}) {
   events.invalidations.push({ step, options });
+  const resets = getDownstreamStateResets(step, await getState());
+  if (Object.keys(resets).length > 0) {
+    events.stateUpdates.push(resets);
+  }
 }
 function cancelPendingCommands(reason = '') {
   events.cancellations.push(reason);
@@ -574,6 +580,47 @@ test('auto-run restarts from confirm-oauth step after transient step10 token_exc
     },
   });
   assert.ok(events.logs.some(({ message }) => /回到节点 confirm-oauth 重新开始授权流程/.test(message)));
+});
+
+test('auto-run restarts SUB2API expired oauth session from oauth-login and clears stale session state', async () => {
+  const harness = createHarness({
+    failureStep: 10,
+    failureBudget: 1,
+    failureMessage: 'session not found or expired',
+    authState: { state: 'oauth_consent_page', url: 'https://auth.openai.com/sign-in-with-chatgpt/codex/consent' },
+    customState: {
+      panelMode: 'sub2api',
+      stepStatuses: { 3: 'completed' },
+      stepsVersion: 'ultra2.0',
+      visibleStep: 10,
+      sub2apiSessionId: 'expired-session',
+      sub2apiOAuthState: 'expired-state',
+      sub2apiGroupId: 5,
+      sub2apiGroupIds: [5],
+      sub2apiDraftName: 'draft',
+      sub2apiProxyId: 7,
+      accountContributionEnabled: false,
+    },
+  });
+
+  const events = await harness.run();
+
+  assert.deepStrictEqual(events.steps, [7, 8, 9, 10, 7, 8, 9, 10]);
+  assert.equal(events.invalidations.length, 1);
+  assert.deepStrictEqual(events.invalidations[0], {
+    step: 6,
+    options: {
+      logLabel: '节点 platform-verify 报错后准备回到 oauth-login 重试（第 1 次重开）',
+    },
+  });
+  const resetPatch = events.stateUpdates.find((updates) => updates.sub2apiSessionId === null);
+  assert.ok(resetPatch, 'expected oauth-login restart to clear stale SUB2API OAuth runtime');
+  assert.equal(resetPatch.sub2apiOAuthState, null);
+  assert.equal(resetPatch.sub2apiGroupId, null);
+  assert.deepStrictEqual(resetPatch.sub2apiGroupIds, []);
+  assert.equal(resetPatch.sub2apiDraftName, null);
+  assert.equal(resetPatch.sub2apiProxyId, null);
+  assert.ok(events.logs.some(({ message }) => /回到节点 oauth-login 重新开始授权流程/.test(message)));
 });
 
 test('auto-run restarts Plus/GPC oauth-login aggregate entry-open failure from step 10', async () => {
