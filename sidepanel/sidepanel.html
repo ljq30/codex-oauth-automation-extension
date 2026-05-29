@@ -1747,12 +1747,16 @@
             <span id="display-hero-sms-current-code" class="data-value mono hero-sms-runtime-value">未获取</span>
           </div>
           <div id="row-free-reusable-phone" class="hero-sms-runtime-cell hero-sms-runtime-cell-span2 hero-sms-free-phone-cell" style="display:none;">
-            <span class="hero-sms-runtime-key">白嫖号码</span>
-            <input type="text" id="input-free-reusable-phone" class="data-input mono hero-sms-manual-phone-input" placeholder="复用手机号" title="已记录号码会自动显示；未记录时可手动填写并记录" />
-            <span id="display-free-reusable-phone-country" class="data-value hero-sms-free-phone-country">地区：未保存</span>
-            <span id="display-free-reusable-phone" class="data-value mono hero-sms-runtime-value">未保存</span>
-            <button id="btn-save-free-reusable-phone" class="btn btn-outline btn-xs data-inline-btn hero-sms-runtime-action" type="button">记录</button>
-            <button id="btn-clear-free-reusable-phone" class="btn btn-ghost btn-xs data-inline-btn hero-sms-runtime-action" type="button">清除</button>
+            <div class="hero-sms-free-phone-input-row">
+              <span class="hero-sms-runtime-key">白嫖号码</span>
+              <input type="text" id="input-free-reusable-phone" class="data-input mono hero-sms-manual-phone-input" placeholder="复用手机号" title="已记录号码会自动显示；未记录时可手动填写并记录" />
+            </div>
+            <div class="hero-sms-free-phone-status-row">
+              <span id="display-free-reusable-phone-country" class="data-value hero-sms-free-phone-country">地区：未保存</span>
+              <span id="display-free-reusable-phone" class="data-value mono hero-sms-runtime-value">未保存</span>
+              <button id="btn-save-free-reusable-phone" class="btn btn-outline btn-xs data-inline-btn hero-sms-runtime-action" type="button">记录</button>
+              <button id="btn-clear-free-reusable-phone" class="btn btn-ghost btn-xs data-inline-btn hero-sms-runtime-action" type="button">清除</button>
+            </div>
           </div>
           <div id="row-hero-sms-preferred-activation" class="hero-sms-runtime-cell hero-sms-runtime-cell-span2" style="display:none;">
             <span class="hero-sms-runtime-key">优先号码</span>

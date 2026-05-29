@@ -1794,7 +1794,6 @@ const PRIVACY_MASKED_INPUT_IDS = Object.freeze([
   'input-ip-proxy-host',
   'input-ip-proxy-region',
   'input-account-run-history-helper-base-url',
-  'input-free-reusable-phone',
   'input-signup-phone',
 ]);
 const PRIVACY_MASKED_TEXTAREA_IDS = Object.freeze([

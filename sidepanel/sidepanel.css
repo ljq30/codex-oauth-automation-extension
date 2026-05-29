@@ -2535,12 +2535,26 @@ header {
 }
 
 .hero-sms-free-phone-cell {
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.hero-sms-free-phone-input-row,
+.hero-sms-free-phone-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hero-sms-free-phone-status-row {
+  padding-left: 66px;
 }
 
 .hero-sms-manual-phone-input {
-  flex: 1 1 150px;
-  min-width: 120px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .hero-sms-free-phone-country {
