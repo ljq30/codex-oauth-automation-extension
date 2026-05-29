@@ -4654,7 +4654,10 @@ function collectSettingsPayload() {
   const maDaoRoutingPlanIdValue = typeof selectMaDaoRoutingPlanId !== 'undefined' && selectMaDaoRoutingPlanId
     ? normalizeMaDaoIdentifierSafe(selectMaDaoRoutingPlanId.value || '')
     : normalizeMaDaoIdentifierSafe(latestState?.madaoRoutingPlanId || '');
-  const shouldReadMaDaoDirectControls = maDaoModeValue === MADAO_MODE_DIRECT;
+  const maDaoDirectModeValue = typeof MADAO_MODE_DIRECT !== 'undefined'
+    ? MADAO_MODE_DIRECT
+    : 'direct';
+  const shouldReadMaDaoDirectControls = maDaoModeValue === maDaoDirectModeValue;
   const maDaoProviderIdValue = shouldReadMaDaoDirectControls && typeof selectMaDaoProviderId !== 'undefined' && selectMaDaoProviderId
     ? normalizeMaDaoProviderIdSafe(selectMaDaoProviderId.value || '')
     : normalizeMaDaoProviderIdSafe(latestState?.madaoProviderId || '');
@@ -17628,7 +17631,10 @@ function buildPhoneSmsProviderStatePatch(provider = getSelectedPhoneSmsProvider(
   }
   if (normalizedProvider === PHONE_SMS_PROVIDER_MADAO) {
     const maDaoMode = normalizeMaDaoModeValue(selectMaDaoMode?.value || latestState?.madaoMode);
-    const shouldReadMaDaoDirectControls = maDaoMode === MADAO_MODE_DIRECT;
+    const maDaoDirectModeValue = typeof MADAO_MODE_DIRECT !== 'undefined'
+      ? MADAO_MODE_DIRECT
+      : 'direct';
+    const shouldReadMaDaoDirectControls = maDaoMode === maDaoDirectModeValue;
     return {
       madaoBaseUrl: normalizeMaDaoBaseUrlValue(inputMaDaoBaseUrl?.value || latestState?.madaoBaseUrl),
       madaoHttpSecret: String(inputMaDaoHttpSecret?.value || ''),
