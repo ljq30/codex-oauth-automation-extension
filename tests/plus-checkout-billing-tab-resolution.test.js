@@ -801,6 +801,50 @@ test('GPC billing collapses repeated running status logs with a multiplier', asy
   assert.equal(events.completed.length, 1);
 });
 
+test('GPC billing collapses repeated start-ready status logs with a multiplier before terminal failure', async () => {
+  const { events, executor, pageHarness } = createGpcPageExecutorHarness([
+    {
+      startButtonText: '开始 Plus 充值',
+      logText: 'SYSTEM 页面已就绪',
+      isCardModeActive: false,
+    },
+    {
+      startButtonText: '开始 Plus 充值',
+      logText: 'SYSTEM 页面已就绪',
+      isCardModeActive: false,
+    },
+    {
+      startButtonText: '开始 Plus 充值',
+      logText: 'SYSTEM 页面已就绪',
+      isCardModeActive: false,
+    },
+    {
+      startButtonText: '开始 Plus 充值',
+      logText: '[02:20:09] ERROR 该账户没有试用资格',
+      noTrial: true,
+      isCardModeActive: false,
+    },
+  ]);
+
+  await assert.rejects(
+    () => executor.executePlusCheckoutBilling({
+      plusPaymentMethod: 'gpc-helper',
+      plusCheckoutSource: 'gpc-helper',
+      plusCheckoutTabId: 77,
+    }),
+    /PLUS_CHECKOUT_NON_FREE_TRIAL::/
+  );
+
+  const startReadyLogs = events.logs.filter((entry) => /GPC 页面状态：开始 Plus 充值/.test(entry.message));
+  const modeReadyLogs = events.logs.filter((entry) => /GPC 卡密充值模式已就绪，准备启动/.test(entry.message));
+  assert.equal(pageHarness.clicks.length, 0);
+  assert.equal(startReadyLogs.length, 1);
+  assert.equal(modeReadyLogs.length, 1);
+  assert.match(startReadyLogs[0].message, /开始 Plus 充值 ×4/);
+  assert.match(modeReadyLogs[0].message, /准备启动。 ×3/);
+  assert.equal(events.completed.length, 0);
+});
+
 test('GPC billing fails current round without restart when account has no trial eligibility', async () => {
   const { events, executor, pageHarness } = createGpcPageExecutorHarness([
     { startButtonText: '开始 Plus 充值', logText: '[02:20:00] ACTION 任务开始执行... [02:20:09] ERROR 该账户没有试用资格', noTrial: true },

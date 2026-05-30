@@ -462,42 +462,44 @@
       const deadline = Date.now() + getGpcPageTimeoutMs(state);
       let startAttempts = 0;
       let hasClickedStart = false;
-      let pendingStatusKey = '';
-      let pendingStatusLabel = '';
-      let pendingStatusLevel = 'info';
-      let pendingStatusCount = 0;
+      let pendingGpcLogs = [];
 
-      const flushPendingStatusLog = async () => {
-        if (!pendingStatusKey || !pendingStatusCount) {
+      const collectPendingGpcLog = (message, level = 'info', key = '') => {
+        const normalizedMessage = String(message || '').trim();
+        const normalizedKey = String(key || normalizedMessage).trim();
+        if (!normalizedMessage || !normalizedKey) {
           return;
         }
-        const countSuffix = pendingStatusCount > 1 ? ` ×${pendingStatusCount}` : '';
-        await addLog(`步骤 7：GPC 页面状态：${pendingStatusLabel}${countSuffix}`, pendingStatusLevel);
-        pendingStatusKey = '';
-        pendingStatusLabel = '';
-        pendingStatusLevel = 'info';
-        pendingStatusCount = 0;
+        const existingEntry = pendingGpcLogs.find((entry) => entry.key === normalizedKey);
+        if (existingEntry) {
+          existingEntry.count += 1;
+          return;
+        }
+        pendingGpcLogs.push({
+          key: normalizedKey,
+          message: normalizedMessage,
+          level,
+          count: 1,
+        });
+      };
+
+      const flushPendingStatusLog = async () => {
+        if (!pendingGpcLogs.length) {
+          return;
+        }
+        const entries = pendingGpcLogs;
+        pendingGpcLogs = [];
+        for (const entry of entries) {
+          const countSuffix = entry.count > 1 ? ` ×${entry.count}` : '';
+          await addLog(`${entry.message}${countSuffix}`, entry.level);
+        }
       };
 
       const collectStatusLog = async (pageState, currentButtonText) => {
         const statusLabel = `${currentButtonText || '未识别按钮'}${pageState.hasSubscriptionDone ? ' / 订阅完成' : ''}`;
-        const statusKey = [
-          currentButtonText || '',
-          pageState.hasSubscriptionDone ? 'done' : '',
-          pageState.noTrial ? 'no-trial' : '',
-          pageState.isCardModeActive ? 'card' : 'not-card',
-          pageState.startButtonDisabled ? 'disabled' : '',
-        ].join('|');
+        const statusKey = statusLabel || '未识别按钮';
         const statusLevel = pageState.hasSubscriptionDone ? 'ok' : 'info';
-        if (statusKey === pendingStatusKey) {
-          pendingStatusCount += 1;
-          return;
-        }
-        await flushPendingStatusLog();
-        pendingStatusKey = statusKey;
-        pendingStatusLabel = statusLabel;
-        pendingStatusLevel = statusLevel;
-        pendingStatusCount = 1;
+        collectPendingGpcLog(`步骤 7：GPC 页面状态：${statusLabel}`, statusLevel, `status:${statusKey}`);
       };
 
       while (Date.now() <= deadline) {
@@ -537,27 +539,33 @@
         }
 
         if (!pageState.isCardModeActive) {
-          await flushPendingStatusLog();
           let modeResult = null;
           for (let attempt = 1; attempt <= 8; attempt += 1) {
             modeResult = await ensureGpcCardMode(tabId);
             if (!modeResult.ok) {
+              await flushPendingStatusLog();
               throw new Error('GPC_PAGE_FLOW_ENDED::步骤 7：未找到 GPC“卡密充值”模式入口，无法启动 Plus 充值。');
             }
             if (modeResult.isCardModeActive) {
               break;
             }
             if (attempt === 1 && modeResult.clicked) {
-              await addLog('步骤 7：已切换到 GPC 卡密充值模式，等待页面完成渲染。', 'info');
+              collectPendingGpcLog(
+                '步骤 7：已切换到 GPC 卡密充值模式，等待页面完成渲染。',
+                'info',
+                'mode-switch'
+              );
             }
             await sleepWithStop(modeResult.clicked ? 800 : 500);
           }
           if (!modeResult?.isCardModeActive) {
+            await flushPendingStatusLog();
             throw new Error('GPC_PAGE_FLOW_ENDED::步骤 7：GPC 页面切换到卡密充值模式超时，无法启动 Plus 充值。');
           }
-          await addLog(
+          collectPendingGpcLog(
             '步骤 7：GPC 卡密充值模式已就绪，准备启动。',
-            'info'
+            'info',
+            'mode-ready'
           );
           continue;
         }
