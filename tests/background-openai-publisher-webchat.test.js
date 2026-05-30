@@ -43,19 +43,13 @@ test('OpenAI webchat publisher builds session payload without requiring Plus str
     ''
   ), {
     accounts: [{
-      provider: 'openai',
-      type: 'session',
-      session: {
-        accessToken: 'session-token',
-        user: { email: 'flow@example.com' },
-      },
-      token: 'session-token',
-      accessToken: 'session-token',
+      provider: 'gpt',
+      access_token: 'session-token',
     }],
     strategy: 'merge',
     source_id: 'flowpilot-openai-session',
     source_name: 'FlowPilot OpenAI Session',
-    provider: 'openai',
+    provider: 'gpt',
   });
 
   assert.throws(
@@ -95,12 +89,34 @@ test('OpenAI webchat publisher posts session payload with bearer admin key', asy
   assert.equal(requests[0].method, 'POST');
   assert.equal(requests[0].authorization, 'Bearer admin-secret');
   assert.equal(requests[0].contentType, 'application/json');
-  assert.equal(requests[0].body.accounts[0].provider, 'openai');
-  assert.equal(requests[0].body.accounts[0].type, 'session');
-  assert.equal(requests[0].body.accounts[0].token, 'session-token');
+  assert.equal(requests[0].body.provider, 'gpt');
+  assert.equal(requests[0].body.accounts[0].provider, 'gpt');
+  assert.equal(requests[0].body.accounts[0].access_token, 'session-token');
+  assert.equal(Object.prototype.hasOwnProperty.call(requests[0].body.accounts[0], 'type'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(requests[0].body.accounts[0], 'session'), false);
   assert.equal(requests[0].body.strategy, 'merge');
   assert.equal(result.endpointUrl, 'https://remote.example.com/api/remote-account/inject');
   assert.equal(result.message, 'ok');
+});
+
+test('OpenAI webchat publisher surfaces FastAPI validation detail on upload failure', async () => {
+  const api = loadPublisherApi();
+
+  await assert.rejects(
+    () => api.uploadOpenAiSessionToWebchat(
+      'https://remote.example.com/admin',
+      'admin-secret',
+      { accessToken: 'session-token' },
+      async () => createJsonResponse({
+        detail: [{
+          loc: ['body', 'provider'],
+          msg: "Input should be 'gpt', 'grok' or 'gemini'",
+          type: 'literal_error',
+        }],
+      }, 422)
+    ),
+    /provider: Input should be 'gpt', 'grok' or 'gemini'/
+  );
 });
 
 test('OpenAI webchat executor reads latest state and writes upload status without leaking secrets', async () => {
@@ -162,7 +178,9 @@ test('OpenAI webchat executor reads latest state and writes upload status withou
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, 'https://remote.example.com/api/remote-account/inject');
   assert.equal(requests[0].authorization, 'Bearer live-admin-key');
-  assert.equal(requests[0].body.accounts[0].token, 'live-session-token');
+  assert.equal(requests[0].body.provider, 'gpt');
+  assert.equal(requests[0].body.accounts[0].provider, 'gpt');
+  assert.equal(requests[0].body.accounts[0].access_token, 'live-session-token');
   assert.equal(completed.length, 1);
   assert.equal(completed[0].nodeId, 'openai-upload-session-to-webchat');
   assert.equal(completed[0].payload.openaiWebchatUploadStatus, 'uploaded');
@@ -216,7 +234,9 @@ test('OpenAI webchat executor can use shared Grok webchat2api config', async () 
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, 'https://shared.example.com/api/remote-account/inject');
   assert.equal(requests[0].authorization, 'Bearer shared-admin-key');
-  assert.equal(requests[0].body.accounts[0].token, 'shared-session-token');
+  assert.equal(requests[0].body.provider, 'gpt');
+  assert.equal(requests[0].body.accounts[0].provider, 'gpt');
+  assert.equal(requests[0].body.accounts[0].access_token, 'shared-session-token');
   assert.equal(liveState.openaiWebchatUploadStatus, 'uploaded');
 });
 

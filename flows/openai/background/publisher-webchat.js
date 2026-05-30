@@ -2,6 +2,7 @@
   root.MultiPageBackgroundOpenAiPublisherWebchat = factory();
 })(typeof self !== 'undefined' ? self : globalThis, function createBackgroundOpenAiPublisherWebchatModule() {
   const WEBCHAT_INJECT_PATH = '/api/remote-account/inject';
+  const WEBCHAT_GPT_PROVIDER_ID = 'gpt';
   const DEFAULT_SOURCE_ID = 'flowpilot-openai-session';
   const DEFAULT_SOURCE_NAME = 'FlowPilot OpenAI Session';
 
@@ -28,11 +29,36 @@
     return { text, json };
   }
 
+  function readWebchatDetailMessage(detail) {
+    if (Array.isArray(detail)) {
+      return cleanString(detail.map((item) => {
+        if (isPlainObject(item)) {
+          const loc = Array.isArray(item.loc)
+            ? item.loc.map((part) => cleanString(part)).filter((part) => part && part !== 'body').join('.')
+            : cleanString(item.loc);
+          const message = cleanString(item.msg || item.message || item.error || item.type);
+          return [loc, message].filter(Boolean).join(': ');
+        }
+        return cleanString(item);
+      }).filter(Boolean).join('; '));
+    }
+    if (isPlainObject(detail)) {
+      const error = detail.error;
+      return cleanString(
+        (isPlainObject(error) ? error.message : error)
+        || detail.message
+        || detail.msg
+      );
+    }
+    return cleanString(detail);
+  }
+
   function readWebchatResponseMessage(body = {}, fallback = '') {
+    const error = body?.json?.error;
     return cleanString(
-      body?.json?.error?.message
-      || body?.json?.error
+      (isPlainObject(error) ? error.message : error)
       || body?.json?.message
+      || readWebchatDetailMessage(body?.json?.detail)
       || fallback
     );
   }
@@ -84,21 +110,19 @@
   }
 
   function buildOpenAiSessionInjectPayload(session = null, accessToken = '') {
-    const token = cleanString(accessToken || session?.accessToken);
-    if (!session && !token) {
+    const token = cleanString(accessToken || session?.access_token || session?.accessToken);
+    if (!token) {
       throw new Error('缺少 ChatGPT 会话或 accessToken。');
     }
     return {
       accounts: [{
-        provider: 'openai',
-        type: 'session',
-        ...(session ? { session } : {}),
-        ...(token ? { token, accessToken: token } : {}),
+        provider: WEBCHAT_GPT_PROVIDER_ID,
+        access_token: token,
       }],
       strategy: 'merge',
       source_id: DEFAULT_SOURCE_ID,
       source_name: DEFAULT_SOURCE_NAME,
-      provider: 'openai',
+      provider: WEBCHAT_GPT_PROVIDER_ID,
     };
   }
 
