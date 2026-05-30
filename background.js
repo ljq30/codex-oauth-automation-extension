@@ -13815,6 +13815,7 @@ const step1Executor = self.MultiPageBackgroundStep1?.createStep1Executor({
   addLog,
   completeNodeFromBackground,
   openSignupEntryTab,
+  waitForTabStableComplete,
 });
 const step2Executor = self.MultiPageBackgroundStep2?.createStep2Executor({
   addLog,
